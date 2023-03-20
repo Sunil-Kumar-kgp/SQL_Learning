@@ -1,0 +1,155 @@
+10 Key SQL Guidelines 
+There are a lot of decisions to make when creating new tables and data warehouses. Some that seem inconsequential at the time end up causing you and your users pain for the life of the database. 
+
+We’ve worked with thousands of people and their databases and, after countless hours of reading and writing queries, we’ve seen almost everything. Here are our top 10 rules for creating pain-free schemas.
+
+1. Only use lowercase letters, numbers and underscores 
+Don’t use dots, spaces or dashes in database, schema, table or column names. Dots are for identifying objects, usually in the database.schema.table.column pattern. 
+
+Having dots in names of objects will cause confusion. Likewise, using spaces in object names will force you to add a bunch of otherwise unnecessary quotes to your query:
+
+select “user name” from events
+-- vs
+select user_name from events
+Queries are harder to write if you use capital letters in table or column names. If everything is lowercase, no one has to remember if the users table is Users or users. 
+
+And when you eventually change databases or replicate your tables into a warehouse, you won’t need to remember which database is case-sensitive, as only some are
+
+2. Use simple, descriptive column names
+If the users table needs a foreign key to the packages table, name the key package_id . Avoid short and cryptic names like pkg_fk ; others won’t know what that means. Descriptive names make it easier for others to understand the schema, which is vital to maintaining efficiency as the team grows.
+
+Don’t use ambiguous names for polymorphic data. If you find yourself creating columns with an item_type or item_value pattern, you’re likely better off using more columns with specific names
+
+like photo_count , view_count , transaction_price.
+
+This way, the contents of a column are always known from the schema, and are not dependent on other values in the row.
+
+select sum(item_value) as photo_count
+from items
+where item_type = ‘Photo Count’
+-- vs
+select sum(photo_count) from items
+Don’t prefix column names with the name of the containing table. It’s generally unhelpful to have the users table contains columns like user_birthday , user_created_at or user_name. 
+
+Avoid using reserved keywords like column, tag and user as column names. You’ll have to use extra quotes in your queries and forgetting to do so will get you very confusing error messages. The database can wildly misunderstand the query if a keyword shows up where a column name should be.
+
+3. Use simple, descriptive table names 
+If the table name is made up of multiple words, use underscores to separate the words. It’s much easier to read package_deliveries than package deliveries. And whenever possible, use one word instead of two: deliveries is even easier to read.
+
+select * from packagedeliveries
+-- vs
+select * from deliveries
+Don’t prefix tables to imply a schema. If you need the table grouped into a scope, put those tables into a schema. Having tables with names like store_items , store_transactions, store_coupons, like prefixed column names, is generally not worth the extra typing.
+
+We recommend using pluralized names for tables (e.g. packages ), and pluralizing both words in the name of a join table (e.g. packages_users ). Singular table names are more likely to accidentally collide with reserved keywords and are generally less readable in queries.
+
+4. Have an integer primary key
+Even if you’re using UUIDs or it doesn’t make sense (e.g. for join tables), add the standard id column with an auto-incrementing integer sequence. This kind of key makes certain analyses much easier, like selecting only the first row of a group. 
+
+And if an import job ever duplicates data, this key will be a life-saver because you’ll be able to delete specific rows:
+
+delete from my_table
+where id in (select ...) as duplicated_ids
+Avoid multi-column primary keys. They can be difficult to reason about when trying to write efficient queries, and very difficult to change. Use an integer primary key, a multi-column unique constraint, and several single-column indexes instead.
+
+5. Be consistent with foreign keys 
+There are many styles for naming primary and foreign keys. Our recommendation, and the most popular, is to have a primary key called id for any table foo , and have all foreign keys be named foo_id. 
+
+Another popular style uses globally unique key names, where the foo table has a primary key called foo_id and all foreign keys are also called foo_id. This can get confusing or have name collisions if you use abbreviations (e.g. uid for the users table), so don’t abbreviate. 
+
+Whatever style you choose, stick to it. Don’t use uid in some places and user_id or users_fk in others.
+
+select *
+from packages
+ join users on users.user_id = packages.uid
+-- vs
+select *
+from packages
+ join users on users.id = packages.user_id
+-- or
+select *
+from packages
+ join users using (user_id)
+And be careful with foreign keys that don’t obviously match up to a table. A column named owner_id might be a foreign key to the users table, or it might not. Name the column user_id or, if necessary, owner_user_id.
+
+6. Store datetimes as datetimes 
+Don’t store Unix timestamps or strings as dates: convert them to datetimes instead. While SQL’s date math functions aren’t the greatest, doing it yourself on timestamps is even harder. Using SQL date functions requires every query to involve a conversion from the timestamp to a datetime:
+
+select date(from_unixtime(created_at))
+from packages
+-- vs
+select date(created_at)
+from packages
+Don’t store the year, month and day in separate columns. This will make every time series query much harder to write, and will prevent most novice SQL users from being able to use the date information in this table.
+
+select date(created_year || ‘-’
+ || created_month || ‘-’
+ || created_day)
+-- vs
+select date(created_at)
+7. UTC, always UTC 
+Using a timezone other than UTC will cause endless problems. Great tools have all the functionality you need you convert the data from UTC to your current timezone. 
+
+select [created_at:pst], email_address
+from users
+The database’s time zone should be UTC, and all datetime columns should be types that strip time zones (e.g. timestamp without time zone). 
+
+If your database’s time zone is not UTC, or you have a mix of UTC and non-UTC datetimes in your database, time series analysis will be a lot harder.
+
+8. Have one source of truth 
+There should only ever be one source of truth for a piece of data. Views and rollups should be labeled as such. This way consumers of that data will know there is a difference between the data they are using and the raw truth.
+
+select *
+from daily_usage_rollup
+Leaving legacy columns around like user_id , user_id_old or user_id_v2 can become an endless source of confusion. Be sure to drop abandoned tables and unused columns during regular maintenance.
+
+9. Prefer tall tables without JSON columns 
+You don’t want to have super-wide tables. If there’s more than a few dozen columns and some of them are named sequentially (e.g. answer1 , answer2 or answer3 ), you’re going to have a bad time later. 
+
+Pivot the table into a schema that doesn’t have duplicated columns — this schema shape will be a lot easier to query. For example, getting the number of completed answers for a survey:
+
+select
+ sum(
+ (case when answer1 is not null
+ then 1 else 0 end) +
+ (case when answer2 is not null
+ then 1 else 0 end) +
+ (case when answer3 is not null
+ then 1 else 0 end)
+ ) as num_answers
+from surveys
+where id = 123
+-- vs
+select count(response)
+from answers
+where survey_id = 123
+For analysis queries, extracting data from JSON columns can greatly degrade a query’s performance. While there are a lot of great reasons to use JSON columns in production, there aren’t for analysis. Aggressively schematize JSON columns into the simpler data types to make analysis a lot easier and faster.
+
+10. Don’t over-normalize 
+Dates, zip codes and countries don’t need their own tables with foreign key lookups. If you do that, every query ends up with a handful of the same joins. It creates a lot of duplicated SQL and a lot of extra work for the database.
+
+select
+ dates.d,
+ count(1)
+from users
+ join dates on users.created_date_id = dates.id
+group by 1
+-- vs
+select
+ date(created_at),
+ count(1)
+from users
+group by 1
+Tables are for first class objects that have a lot of their own data. Everything else can be additional columns on a more important object.
+
+Conclusion
+Better schemas await! 
+
+Armed with these rules, your next table or warehouse will be easier to query for both you and new team members as you expand. 
+
+If your company is ready to start building a sound data analytics infrastructure, we can help. With these tips, you’re more than prepared to put a solid framework in place for data analytics that will create immediate value for your organization. 
+
+We’ve helped more than 2000 customers of all sizes connect their data and produce valuable insights that lead to better decisions. If you have any questions about how your team can use data analytics, request a contact and one of our experts will reach out to you soon
+
+Taken from 
+https://www.sisense.com/whitepapers/sql-analytics-best-practices-tips-and-tricks/
