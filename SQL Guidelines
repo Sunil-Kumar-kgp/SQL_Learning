@@ -1,7 +1,6 @@
 10 Key SQL Guidelines 
-There are a lot of decisions to make when creating new tables and data warehouses. Some that seem inconsequential at the time end up causing you and your users pain for the life of the database. 
-
-We’ve worked with thousands of people and their databases and, after countless hours of reading and writing queries, we’ve seen almost everything. Here are our top 10 rules for creating pain-free schemas.
+There are a lot of decisions to make when creating new tables and data warehouses. 
+Some that seem inconsequential at the time end up causing you and your users pain for the life of the database. 
 
 1. Only use lowercase letters, numbers and underscores 
 Don’t use dots, spaces or dashes in database, schema, table or column names. Dots are for identifying objects, usually in the database.schema.table.column pattern. 
