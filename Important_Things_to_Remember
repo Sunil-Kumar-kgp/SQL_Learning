@@ -3,5 +3,49 @@ Basic Misses in where vs having clause, Left Join Mistakes etc
 https://towardsdatascience.com/sql-riddles-to-test-your-wits-8ce31202ae7f
 
 Group by, Having max(), Having Min()
+
+Partition by 
+
+Partitions
+So far we’ve made great use of aggregations via GROUP BY. One major limitation of this clause is that we can only select aggregations (eg SUM, AVG, MAX, etc) of variables, or the GROUP BY terms themselves (customer_id, week_num, etc.)
+
+Let’s say that you want information aggregated at the weekly level, but you want to view it on the daily level, what should you do?
+
+This is exactly what partitions were invented for. They scare people frequently, so let’s demystify them. They do two things: First, make calculations at an aggregate level; and second, project those calculations back onto the original granularity level.
+
+To give an example, let’s say that we want to know the percent spend, by customer and week_num, on each day.
+
+SELECT customer_id,
+       ds,
+       spend / SUM(spend) OVER 
+           (PARTITION BY customer_id, 
+                         DATE_DIFF('week', ds, '2022-01-01')
+       ) AS wkly_pct_spend_dist
+FROM orders
+What on earth is going on here?
+
+We’ve already seen DATE_DIFF('week', ds, '2022-01-01') before; this is how we compute the week number. So we’re partitioning by customer_id and week_num.
+
+A partition has three elements
+
+The aggregation, in our case, SUM(spend).
+OVER this keyword instructs SQL to perform a GROUP BY aggregation according to the third term and project it back onto the original granularity
+(PARTITION BY <terms>) this is analogous to GROUP BY. What terms are we using to inform the aggregation in 1.
+Now, the output of this query tells us how much each customer spent on a given day, on a weekly basis. If a customer is generally inactive, we can expect this value to almost always be 1 (100%).
+
+Conversely, if a customer made equally expensive purchases every day of the week, 1/7 => .1428, we’d expect 14.28% per day. This is highly unlikely.
+
+But now we know that a given customer will fall between the boundaries of 1 and .1428.
+
+If customers are generally inactive, then we expect the sum partitioned by customer and week_number to be 0. And division by zero is a no-go in programming, including SQL. So this value would evaluate to NULL.
+
+Let’s say we don’t want NULL returned. No worries, COALESCE to the rescue!
+
+COALESCE( 
+       spend / SUM(spend) OVER 
+           (PARTITION BY customer_id, 
+                         DATE_DIFF('week', ds, '2022-01-01')
+       ), 0.0) AS wkly_pct_spend_dist
+The COALESCE term simply returns the first Non-NULL value. So if the first term evaluates to Null, and we don’t want that, the second term, 0.0, will be returned instead.
 https://medium.com/@jacob.d.moore1/wizard-level-sql-5ca3e44d39c4
 
